@@ -1,0 +1,793 @@
+---
+title: "Combined analysis pipeline"
+author: "Anna Stuckert"
+date: "11/25/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#Preparation
+```{r}
+#Read in packages
+pacman::p_load(here, tidyverse, dplyr, reshape2, ggthemes)
+
+#Get survey-data with demographics and IDs
+source(here("Data", "read_raw_data.r"))
+
+# Removing 44 and 46, becuase they have pseudo ID's and 1108 as this is Nanna testing if redcap surveys work
+data <- filter(data, record_id != 44 & record_id != 46 &  record_id != 1108 &  record_id != 222)
+
+
+#Inserting new, true Observations under their correct ID numbers
+#  5934 = 44
+data$record_id <- ifelse(data$record_id == 5934, 44, data$record_id)
+
+#  5992 = 46
+data$record_id <- ifelse(data$record_id == 5992, 46, data$record_id)
+
+# 6335 = 222
+data$record_id <- ifelse(data$record_id == 6335, 222, data$record_id)
+
+#Get interoception task data
+Intero_data <- read_delim(here::here("Data", 'Behavior.txt'),  delim=",")
+
+#Clean values in subject column for sub_0XXX
+Intero_data$Subject <- gsub("sub_0+", "", Intero_data$Subject) %>% as.integer()
+Intero_data <- Intero_data %>% mutate(record_id = Subject)
+
+#create column for absolute value of Threshold (as a value of 0 indicates precise interoception, while anything above and below indicates bias) - used in supplementary analyses
+Intero_data <- Intero_data %>% mutate(absolute_threshold = abs(Threshold))
+
+#drop data that is not from del 1
+Intero_data$Session <- ifelse(Intero_data$Session == "Del1", "Del1", NA)
+Intero_data<- Intero_data[!is.na(Intero_data$Session),]
+
+#Merge survey + interoception data
+data <- merge(data, Intero_data, by.y = "record_id")
+
+#Load brain explorer Scavenger task data
+BE_scavenger=read.csv(here::here("Data", 'Cobelab_Scavenger.csv'))
+
+#renaming ID columns
+BE_scavenger <- BE_scavenger %>% mutate(be_id= user)
+
+#Adding column for mean gambling attitude ambigious/non-ambigous
+BE_scavenger <- BE_scavenger %>% mutate(perc_risk_abg= rowMeans(.[, 5:6]))
+BE_scavenger <- BE_scavenger %>% mutate(perc_risk_NoAbg= rowMeans(.[, 7:8]))
+#creating column for average percentages of gambles across conditions
+BE_scavenger <- BE_scavenger %>% mutate(av_value= rowMeans(.[, 5:8]))
+
+#merging with survey+interoception data
+data <- merge(data, BE_scavenger, by.y = "be_id")
+
+#removing datapoints from faulty participants
+data <- filter(data, record_id != 54 & record_id != 84 &  record_id != 192)
+
+#keeping extero for HRD sanity checks
+int_ex_data <- data
+
+#drop extero modality for analysis data
+data$Modality <- ifelse(data$Modality == "Intero", "Intero", NA)
+data<- data[!is.na(data$Modality),]
+
+```
+
+
+DEMOGRAPHICS
+```{r}
+# Mean task duration of HRD
+mean(data$TaskDuration) # mean task duration is 31.58 min. 
+sd(data$TaskDuration) #sd = 3.89 min
+max(data$TaskDuration)
+min(data$TaskDuration)
+
+#Mean Ntrials on gambling task
+mean(data$Ntrials) 
+sd(data$Ntrials) 
+max(data$Ntrials)
+min(data$Ntrials)
+
+# mean age 
+mean(data$age) # mean age is 24.89
+sd(data$age) # sd of 5.04
+max(data$age)
+min(data$age)
+
+# Gender distribtuion
+# Number of men, women, other
+gender <- data %>%
+  group_by(gender)%>%
+  summarise(count = n())
+            # 1 = Woman = 111
+            # 2 = men = 74
+            # 3 = other = 1 
+
+gender
+
+```
+
+#UPDATED HRD SANITY CHECK PLOTS
+
+```{r}
+library(PupillometryR)
+
+#Setting a theme for text size of graphs
+My_Theme = theme(
+  axis.title.x = element_text(size = 14),
+  axis.text.x = element_text(size = 14),
+  axis.title.y = element_text(size = 14))
+
+library(extrafont)
+
+# Creating function for calculating summary statistics
+
+lb <- function(x) mean(x) - sd(x)
+ub <- function(x) mean(x) + sd(x)
+
+
+#SLOPE 
+
+#creating dataframes containing observations only from the interoceptive and exteroceptive conditions seperately
+extero <- filter(int_ex_data, Modality == "Extero")
+intero <- filter(int_ex_data, Modality == "Intero")
+
+#Examining mean and SD of Slope for each modality
+mean(intero$Slope)
+sd(intero$Slope)
+
+mean(extero$Slope)
+sd(extero$Slope)
+
+
+library(plyr)
+sumld_slope<- ddply(int_ex_data, ~Modality, summarise, mean = mean(Slope), median = median(Slope), lower = lb(Slope), upper = ub(Slope))
+
+#With mean + confidence intervals
+Slope_plot <- ggplot(data= int_ex_data, aes(x= Modality, y= Slope, color = Modality, fill = Modality )) +
+geom_flat_violin(position = position_nudge(x = .2, y = 0), alpha = .6) +
+geom_point(aes( y= Slope, color = Modality), position = position_jitter(width = .15), size = .5, alpha = 0.8) +
+geom_point(data = sumld_slope, aes(x = Modality, y = mean),position = position_nudge(x = 0.3), size = 2.5) +
+geom_errorbar(data = sumld_slope, aes(ymin = lower, ymax = upper, y = mean),position = position_nudge(x = 0.3), width = 0)+
+expand_limits(x = 1.25) +
+guides(fill = FALSE) +
+guides(color = FALSE) +
+scale_colour_stata(scheme = "s2color")+
+  scale_fill_stata(scheme = "s2color")+
+  theme_stata(scheme = "s1color")+
+  expand_limits(x = 3)+ My_Theme
+
+#THRESHOLD
+
+#Examining mean and SD of Threshold for each modality
+mean(intero$Threshold)
+sd(intero$Threshold)
+
+mean(extero$Threshold)
+sd(extero$Threshold)
+
+sumld_thres<- ddply(int_ex_data, ~Modality, summarise, mean = mean(Threshold), median = median(Threshold), lower = lb(Threshold), upper = ub(Threshold))
+
+Thres_plot <- ggplot(data= int_ex_data, aes(x= Modality, y= Threshold, color = Modality, fill = Modality )) +
+geom_flat_violin(position = position_nudge(x = .2, y = 0), alpha = .6) +
+geom_point(aes( y= Threshold, color = Modality), position = position_jitter(width = .15), size = .5, alpha = 0.8) +
+geom_point(data = sumld_thres, aes(x = Modality, y = mean),position = position_nudge(x = 0.3), size = 2.5) +
+geom_errorbar(data = sumld_thres, aes(ymin = lower, ymax = upper, y = mean),position = position_nudge(x = 0.3), width = 0)+
+expand_limits(x = 1.25) +
+guides(fill = FALSE) +
+guides(color = FALSE) +
+scale_colour_stata(scheme = "s2color")+
+  scale_fill_stata(scheme = "s2color")+
+  theme_stata(scheme = "s1color")+
+  expand_limits(x = 3)+ My_Theme
+  
+#ACCURACY + RT
+
+acc_RT <- ggplot(data= int_ex_data, aes(x= DecisionRT, y= Accuracy, color = Modality)) +
+  geom_point(alpha = 0.8)+
+  geom_smooth(method = lm)+
+  theme_stata(scheme = "s1color")+
+  scale_colour_stata(scheme = "s2color")+
+  xlab("Mean reaction time per participant in seconds")+
+  ylab("Mean accuracy per participant") + My_Theme+
+  theme(aspect.ratio=1)
+
+acc_RT
+
+library(ggExtra)
+acc_RT_plot <- ggMarginal(acc_RT, groupColour = TRUE, groupFill = FALSE)
+
+Slope_plot
+Thres_plot
+acc_RT_plot
+```
+
+
+EXTRA HRD SANITY PLOTS - checking for outliers
+
+```{r}
+#Threshold
+ggplot(int_ex_data, aes(x= Modality, y= Threshold, color = Modality))+  
+  geom_boxplot()+
+    theme_stata(scheme = "s1color")+
+  scale_colour_stata(scheme = "s2color")
+
+#Slope
+ggplot(int_ex_data, aes(x= Modality, y= Slope, color = Modality)) + 
+  geom_boxplot()+
+    theme_stata(scheme = "s1color")+
+  scale_colour_stata(scheme = "s2color")
+
+#Criterion
+ggplot(int_ex_data, aes(x= Modality, y= Criterion, color = Modality)) + 
+  geom_boxplot()+
+    theme_stata(scheme = "s1color")+
+  scale_colour_stata(scheme = "s2color")
+
+#dPrime
+ggplot(int_ex_data, aes(x= Modality, y= dPrime, color = Modality)) + 
+  geom_boxplot()+
+    theme_stata(scheme = "s1color")+
+  scale_colour_stata(scheme = "s2color")
+
+#DecisionRT
+ggplot(int_ex_data, aes(x= Modality, y= DecisionRT, color = Modality)) + 
+  geom_boxplot()+
+    theme_stata(scheme = "s1color")+
+  scale_colour_stata(scheme = "s2color")
+```
+
+ANOVA 
+
+Load and transform the data - to conduct a repeated measures ANOVA, we need the data in a long format (one datapoint per observation, i.e. for each of the factorial conditions)
+```{r}
+
+#selecting the variables if interest from the gambling data, namely the gambling percentages for each condition, plus the ID variable.
+BE_cut <- select(data, be_id, perc_loss_risk_abg, perc_loss_risk_NoAbg, perc_win_risk_abg, perc_win_risk_NoAbg )
+library(reshape2)
+melted <- melt(BE_cut)
+
+#Add columns indicating framing and ambuigity, and select interoception and interaction variables of interest and combine the dataframes
+melted$Framing <- ifelse(grepl("loss", melted$variable), "Loss", "Win")
+melted$Ambiguity <- ifelse(grepl("abg", melted$variable), "Ambiguous", "Non-ambiguous")
+df_slope_interaction <- select(data, Slope, Threshold, Accuracy, absolute_threshold, be_id)
+melted <- merge(melted, df_slope_interaction, by.y = "be_id")
+
+#Changing variables to factors to allow for statistical analyses
+melted$be_id <- as.factor(melted$be_id)
+melted$Framing <- as.factor(melted$Framing)
+melted$Ambiguity <- as.factor(melted$Ambiguity)
+
+```
+
+
+
+```{r}
+library(pastecs)
+#Descriptives - main effects effects
+by(melted$value, melted$Framing, stat.desc)
+by(melted$value, melted$Ambiguity, stat.desc)
+
+#Descriptives - interaction effects
+by(melted$value, list(melted$Framing,
+melted$Ambiguity), stat.desc)
+
+#loading packages for repated measures ANOVA and post hoc analyses
+library(afex)
+library(emmeans)
+
+aov_anova <- aov_car(value ~ Ambiguity+Framing + Error(be_id/Ambiguity + Framing), data=melted)
+summary(aov_anova)#If there are violations Mauchly's sphericity, it brings it up in the summary of the anova model
+knitr::kable(nice(aov_anova)) #producing a nice table
+
+#Loading packages for linear mixed effects modelling
+library(lmerTest)
+library(lme4)
+
+#creating a linear model of the same variables as included in the anova
+m_anova <-lmer(value ~ Ambiguity*Framing + (1+Ambiguity+Framing|be_id), data=melted)
+summary(m_anova)
+
+
+```
+
+Post hoc tests of ANOVA
+```{r}
+#main effects - if they were of interest (i.e. if there wasn't a significant interaction effect)
+melted_ambiguity<-emmeans(aov_anova, ~ Ambiguity)
+melted_ambiguity
+
+melted_framing<-emmeans(aov_anova, ~ Framing)
+melted_framing
+
+#interacton - what is really of interest to us
+melted_Interaction <- emmeans(aov_anova, ~ Ambiguity|Framing)
+melted_Interaction 
+
+summary(melted_Interaction , infer=TRUE)
+
+#Now, to test the significance of the mean differences, we will use the pairs function. For this, we simply call the pairs function and then specify the object that holds our marginal means.
+pwc <- pairs(melted_Interaction, adjust = "bon") #with bonferroni correction
+pwc
+
+#The pairwise comparisons between loss frames and win frames was statistically significant in both ambigous and non-ambiguous trials (p < 0.0001).
+```
+
+Plot of 2x2 interaction
+
+```{r}
+
+library(Rmisc)
+datac <- summarySEwithin(melted, measurevar="value", withinvars=c("Ambiguity","Framing"),
+                        idvar="be_id", na.rm=FALSE, conf.interval=.95) #making sure to create errorbars that are corrected for repeated measures
+
+#Line Plot
+ggplot(datac, aes(x=Ambiguity, y=value, color=Framing)) +
+  geom_point(stat = "identity") +
+  geom_errorbar(width=.25, aes(ymin=value-ci, ymax=value+ci))+
+  geom_line(aes(group= Framing))+
+  theme_stata(scheme = "s1color")+
+  scale_color_brewer(palette = "Paired")+
+  xlab("Ambiguity")+
+  ylab("Gambling proportion") + My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+```
+
+
+Checking assumptions - ANOVA
+```{r}
+
+hist(melted$value)
+
+#Assumption #1: Your dependent variable should be measured at the continuous level
+#Percentages distributed between 0 and 1, should be okay.
+
+#Assumption #2: Your two within-subjects factors (i.e., two independent variables) should consist of at least two categorical, "related groups" or "matched pairs". "Related groups" indicates that the same subjects are present in both groups.
+#Should be good too.
+
+#Assumption #3: There should be no significant outliers in any combination of the related groups.
+#identifying outliers
+#normal
+library(rstatix)
+outliers <- melted %>%
+  group_by(Ambiguity,Framing) %>%
+  identify_outliers(value)
+
+# You can include the outlier in the analysis anyway if you do not believe the result will be substantially affected. This can be evaluated by comparing the result of the ANOVA with and without the outlier.
+#also, if we do not have theoretical reasons to exclude outliers (e.g. reaction times cannot be faster than 0.2 seconds), then we shouldn't exclude outliers
+
+#Assumption #4: The distribution of the dependent variable in each combination of the related groups should be approximately normally distributed. 
+library(ggpubr)
+ggqqplot(melted, "value", ggtheme = theme_bw()) +
+  facet_grid(Ambiguity ~ Framing)+
+  theme_stata(scheme = "s1mono")+
+  scale_color_brewer(palette = "Paired")+
+  ggtitle("Normality of dependent variable")+My_Theme+
+  theme(text=element_text(family="Times New Roman"))
+
+#From the plot above, as all the points fall approximately along the reference line, we can assume normality.
+#Note that, if your sample size is greater than 50, the normal QQ plot is preferred because at larger sample sizes the Shapiro-Wilk test becomes very sensitive even to a minor deviation from normality.
+
+
+
+#Assumption #5: Known as sphericity, the variances of the differences between all combinations of related groups must be equal.
+#The afex package will check your data for sphericity assumptions and if necessary correct for any violations.
+library(ez)
+ez<- ezANOVA(data=melted,dv=.(value),wid=.(be_id),within=.(Framing, Ambiguity),type=3) #ez anova will let you know if you break the assumption of sphericity
+print(ez) #changing between type 2 and 3 makes no difference - changing between type 1 and 2/3 does change the GES, but not the remaining numbers
+
+#Assumption of sphericity: the variance of the differences between groups should be equal. This can be checked using the Mauchly’s test of sphericity
+# Sphericity is evaluated only for variables with more than two levels because sphericity necessarily holds for conditions with only two levels.
+#--> in a 2x2 design there is no sphericity, therefore these corrections in our example have no effect
+# Basically, it's because there are only 2 levels of repeated measures. As such, there is only one set of difference scores and nothing to compare those difference scores against to indicate a violation of sphericity. I'm glad it was an easy answer.
+
+#Sphericity = A statistical assumption important for repeated-measures ANOVAs. When it is violated, F values will be positively biased. Researchers adjust for this bias by raising the critical value of F needed to attain statistical significance. Mauchley’s test for sphericity is the most common way to see whether the assumption has been met.
+
+
+```
+
+Compute the ANCOVAS
+```{r}
+
+#centering covariate variables
+center_scale <- function(x) {
+    scale(x, scale = FALSE)
+}
+#centering interoception variables
+melted$Slope_center <- center_scale(melted$Slope)
+melted$Threshold_center <- center_scale(melted$Threshold)
+melted$abs_threshold_center <- center_scale(melted$absolute_threshold)
+
+#For slope
+anova_slope <- aov_4(value ~ Ambiguity+Framing+Slope_center + (Ambiguity+Framing|be_id), data=melted, factorize = FALSE)
+summary(anova_slope)
+knitr::kable(nice(anova_slope))
+
+#For threshold
+anova_thres <- aov_4(value ~ Ambiguity+Framing+Threshold_center + (Ambiguity+Framing|be_id), data=melted, factorize = FALSE)
+summary(anova_thres)
+knitr::kable(nice(anova_thres))
+
+#For absolute threshold - used in supplementary analyses
+anova_abs_thres <- aov_4(value ~ Ambiguity+Framing+abs_threshold_center + (Ambiguity+Framing|be_id), data=melted, factorize = FALSE)
+summary(anova_abs_thres)
+knitr::kable(nice(anova_abs_thres))
+
+
+```
+
+NO-INTERCEPT LINEAR MIXED EFFECTS MODEL FOR EXPLAINING 3-WAY INTERACTION
+
+```{r}
+m_no_intercept<- lmer(value ~ 0+Ambiguity:Framing+ Ambiguity:Framing:Slope_center + (0+Ambiguity+Framing|be_id), data=melted)
+summary(m_no_intercept)
+
+#Creating nice HTML format table of linear model output
+library(sjPlot) # table functions
+tab_model(m_no_intercept, show.df = TRUE, digits = 4, show.se = TRUE)
+```
+
+LINEAR MIXED EFFECTS MODEL FOR EXPLAINING 3 WAY INTERACTION
+```{r}
+#Creating af lmer linear model with the same effects
+
+m_ancova <-lmer(value ~ Ambiguity*Framing*Slope_center + (Ambiguity+Framing|be_id), data=melted) #will not run random effects with *, only with + 
+summary(m_ancova)
+
+library(sjPlot) # table functions
+tab_model(m_ancova, show.df = TRUE, digits = 4, show.se = TRUE)
+```
+
+Plotting 3-way interaction effect
+
+```{r}
+#Here it's done with slope, but it's the same plot of we use slope_center, the x-axis is just easier to read when using slope.
+melted$Slope_group <- ifelse(melted$Slope > median(melted$Slope),c("High slope"), c("Low slope"))
+
+library(Rmisc)
+datac <- summarySEwithin(melted, measurevar="value", withinvars=c("Ambiguity","Framing", "Slope_group"),
+                        idvar="be_id", na.rm=FALSE, conf.interval=.95)
+
+#Line Plot
+ggplot(datac, aes(x=Ambiguity, y=value, color=Framing)) +
+  geom_point(stat = "identity") +
+  geom_errorbar(width=.25, aes(ymin=value-ci, ymax=value+ci))+
+  geom_line(aes(group= Framing))+
+  theme_stata(scheme = "s1mono")+
+  scale_color_brewer(palette = "Paired")+
+  xlab("Ambiguity")+
+  ylab("Gambling proportion")+
+  facet_wrap(.~Slope_group) + My_Theme+
+  theme(text=element_text(family="Times New Roman"))
+
+
+#setting color codes to highlight that it is a different plot than the line plot above.
+
+colors <- c("#FB9A99","#E31A1C")
+
+#Without handmade lines
+ggplot(melted, aes(Slope, value, color = Ambiguity))+
+  geom_point()+
+  geom_smooth(method = "lm") + 
+  facet_wrap(.~Framing)+
+  theme_stata(scheme = "s1mono")+
+  scale_color_manual(values= colors)+
+  xlab("Slope")+
+  ylab("Gambling proportion")+
+  geom_vline(xintercept = 15.537) + #specifying a vertical line at the mean slope value
+  My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+```
+
+
+Comparing ANOVA and ANCOVA to see if slope provides more explanatory power to our model
+```{r}
+#Comparing ANOVA model with ANCOVA model
+m_anova <- lmer(value ~ Ambiguity*Framing + (Ambiguity+Framing|be_id), data=melted)
+summary(m_anova)
+m_ancova <- lmer(value ~ Ambiguity*Framing*Slope_center + (Ambiguity+Framing|be_id), data=melted)
+summary(m_ancova)
+
+anova(m_anova, m_ancova) #The extended model is a tiny bit better (and very close to significant)
+
+
+```
+
+
+COMPARISON OF LINEAR MODELS WITH ALTERNATIVE MODELLING CHOICES
+
+```{r}
+
+library(censReg)
+
+#ANCOVA - slope
+lm(value ~ Ambiguity*Framing*Slope_center, data=melted)
+censReg(value ~ Ambiguity*Framing*Slope_center, left = 0, right = 1, data=melted)
+
+#ANCOVA - threshold
+lm(value ~ Ambiguity*Framing*Threshold_center, data=melted)
+censReg(value ~ Ambiguity*Framing*Threshold_center, left = 0, right = 1, data=melted)
+
+#Attempting to run a beta regression, which is not possible as the dependent variable has values of 0 and 1, and beta regressions require values BETWEEN 0 and 1, not including the shole numbers.
+library(betareg)
+b_reg<- betareg(value ~ Ambiguity*Framing*Threshold_center, data=melted)
+
+```
+ 
+POST HOC correlation between interoceptive slope and confidence
+
+```{r}
+hist(data$Confidence)
+hist(data$Slope)
+cor.test(data$Slope, data$Confidence, method = "spearman")
+
+```
+
+
+ASSUMPTION CHECKS - ANCOVAS and LMMS
+
+WITH SLOPE
+```{r}
+#ANCOVA and LMM 2
+
+#Linearity - seems linear
+ggscatter(
+  melted, x = "Slope_center", y = "value",
+  facet.by  = c("Ambiguity", "Framing"), 
+  short.panel.labs = FALSE
+  )+
+  stat_smooth(method = "loess", span = 0.9)+
+   ylab("Gambling proportion") + My_Theme +
+  theme(text=element_text(family="Times New Roman"))+
+  xlab("Slope (centered)")+
+  ggtitle("Linearity")
+
+#homogenity of regression slopes 
+#look if here is a significant interaction effect between covariate and independent variables.
+assump_slope <- aov_4(value ~ Ambiguity+Framing+Slope_center + (Ambiguity+Framing|be_id), data=melted, factorize = FALSE)
+summary(assump_slope)
+
+#identifying outliers - if function worked correctly, there are no outliers
+outliers_value <- melted %>%
+  group_by(Ambiguity, Framing, Slope_center) %>%
+  identify_outliers(value)
+sum(outliers_value$is.outlier)
+
+#Assumption: Independence of the covariate and treatment effect
+ind_cov_slope <- lmer(Slope_center~ Ambiguity+Framing + (Ambiguity+Framing|be_id), data=melted)
+summary(ind_cov_slope)
+
+#checking normality (of dependent variable) - not amazing, but quite fine
+#For each grouping predictor level
+ggqqplot(melted, "value") +
+  facet_grid(Ambiguity ~ Framing)+theme_stata(scheme = "s1mono")+
+  scale_color_brewer(palette = "Paired") + My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+#overall
+melted$Slope_center <- center_scale(melted$Slope)
+ggqqplot(melted, "value") +theme_stata(scheme = "s1mono")+
+  scale_color_brewer(palette = "Paired") + My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+### LMM 2
+
+m_intercept<- lmer(value ~ Ambiguity*Framing*Slope_center + (1+Ambiguity+Framing|be_id), data=melted)
+summary(m_intercept)
+
+#No perfect multicollinearity
+library(car)
+vif(m_intercept)
+
+#homogenity of variance in residuals
+plot(m_intercept, resid(., scaled=TRUE) ~ fitted(.), abline = 0)
+
+#residuals are close to 0
+mean(residuals(m_intercept))
+
+#variability within predictor is positive
+var(melted$Slope_center) 
+
+#normality of residuals
+ggdensity(scale(residuals(m_intercept))) + labs( y = 'Standardized residuals')+
+  theme_stata(scheme = "s1color")+
+  scale_color_brewer(palette = "Paired")
+
+require("lattice")
+qqmath(scale(residuals(m_intercept)))
+
+#predictors and residuals are not correlated
+cor.test(residuals(m_intercept), melted$Slope_center, method = "pearson")
+
+#Linearity between DV and predictor - seems linear
+ggscatter(
+  melted, x = "Slope_center", y = "value",
+  short.panel.labs = FALSE
+  )+
+  stat_smooth(method = "loess", span = 0.9)+
+  ylab("Gambling proportion")+
+  xlab("Slope (centered)")+
+  ggtitle("Linearity")+My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+#identifying outliers - if function worked correctly, there are no outliers
+outliers_value <- melted %>%
+  group_by(Ambiguity, Framing, Slope_center) %>%
+  identify_outliers(value)
+sum(outliers_value$is.outlier)
+
+#checking normality (of dependent variable) - not amazing, but quite fine
+#For each grouping predictor level
+ggqqplot(melted, "value") +
+  facet_grid(Ambiguity ~ Framing)+theme_stata(scheme = "s1mono")+
+  scale_color_brewer(palette = "Paired") + My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+#overall
+melted$Slope_center <- center_scale(melted$Slope)
+ggqqplot(melted, "value") +theme_stata(scheme = "s1mono")+
+  scale_color_brewer(palette = "Paired") + My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+```
+
+For no-intercept model - LMM 1
+
+```{r}
+m_no_intercept<- lmer(value ~ 0+Ambiguity:Framing+ Ambiguity:Framing:Slope_center + (0+Ambiguity+Framing|be_id), data=melted)
+summary(m_no_intercept)
+
+#No perfect multicollinearity - values are below 2
+library(car)
+vif(m_no_intercept)
+
+#homogenity of variance in residuals
+plot(m_no_intercept, resid(., scaled=TRUE) ~ fitted(.), abline = 0)
+
+#residuals are close to 0
+mean(residuals(m_no_intercept))
+
+#variability within predictor is positive
+var(melted$Slope_center) 
+
+#normality of residuals
+ggdensity(scale(residuals(m_no_intercept))) + labs( y = 'Standardized residuals')+
+  theme_stata(scheme = "s1color")+
+  scale_color_brewer(palette = "Paired")
+
+require("lattice")
+qqmath(scale(residuals(m_no_intercept)))
+
+#covariate and residuals are not correlated
+cor.test(residuals(m_no_intercept), melted$Slope_center, method = "pearson")
+
+#Linearity - seems linear
+ggscatter(
+  melted, x = "Slope_center", y = "value",
+  short.panel.labs = FALSE
+  )+
+  stat_smooth(method = "loess", span = 0.9)+
+  ylab("Gambling proportion")+
+  xlab("Slope (centered)")+
+  ggtitle("Linearity")+My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+#identifying outliers - if function worked correctly, there are no outliers
+outliers_value <- melted %>%
+  group_by(Ambiguity, Framing, Slope_center) %>%
+  identify_outliers(value)
+sum(outliers_value$is.outlier)
+
+#checking normality - not amazing, but quite fine
+#For each grouping predictor level
+ggqqplot(melted, "value") +
+  facet_grid(Ambiguity ~ Framing)+theme_stata(scheme = "s1mono")+
+  scale_color_brewer(palette = "Paired") + My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+#overall
+melted$Slope_center <- center_scale(melted$Slope)
+ggqqplot(melted, "value") +theme_stata(scheme = "s1mono")+
+  scale_color_brewer(palette = "Paired") + My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+```
+
+
+
+WITH THRESHOLD
+
+
+```{r}
+
+#Linearity - seems linear
+ggscatter(
+  melted, x = "Threshold_center", y = "value",
+  facet.by  = c("Ambiguity", "Framing"), 
+  short.panel.labs = FALSE
+  )+
+  stat_smooth(method = "loess", span = 0.9)+
+  ylab("Gambling proportion")+
+  xlab("Threshold (centered)")+
+  ggtitle("Linearity")+My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+#homogenity of regession slopes 
+#look if here is a significant interaction effect between covariate and independent variables.
+assump_thres <- aov_4(value ~ Ambiguity+Framing+Threshold_center + (Ambiguity+Framing|be_id), data=melted, factorize = FALSE)
+summary(assump_thres)
+
+#identifying outliers - if function worked correctly, there are no outliers
+outliers_value <- melted %>%
+  group_by(Ambiguity, Framing, Threshold_center) %>%
+  identify_outliers(value)
+sum(outliers_value$is.outlier)
+
+#Assumption: Independence of the covariate and treatment effect
+ind_cov_thres <- lmer(Threshold_center~ Ambiguity+Framing + (Ambiguity+Framing|be_id), data=melted)
+summary(ind_cov_thres)
+
+#checking normality - not amazing, but quite fine
+ggqqplot(melted, "value") +
+  facet_grid(Ambiguity ~ Framing)+theme_stata(scheme = "s1mono")+
+  scale_color_brewer(palette = "Paired")+My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+# LMM
+m_thres<- lmer(value ~ Ambiguity*Framing*Threshold_center + (1+Ambiguity+Framing|be_id), data=melted)
+summary(m_thres)
+
+#No perfect multicollinearity - values are not much above 2.
+library(car)
+vif(m_thres)
+
+#homogenity of variance in residuals - we see no pattern, which suggests it's good
+plot(m_thres, resid(., scaled=TRUE) ~ fitted(.), abline = 0)
+plot(m_thres)
+
+#residuals are close to 0
+mean(residuals(m_thres))
+
+#variability within predictor is positive
+var(melted$Threshold_center) 
+
+#normality of residuals
+ggdensity(scale(residuals(m_thres))) + labs( y = 'Standardized residuals')+
+  theme_stata(scheme = "s1color")+
+  scale_color_brewer(palette = "Paired")
+
+require("lattice")
+qqmath(m_thres)
+
+#covariate and residuals are not correlated
+cor.test(residuals(m_thres), melted$Threshold_center, method = "pearson")
+
+#Linearity - seems linear
+ggscatter(
+  melted, x = "Threshold_center", y = "value",
+  short.panel.labs = FALSE
+  )+
+  stat_smooth(method = "loess", span = 0.9)+
+  ylab("Gambling proportion")+
+  xlab("Threshold (centered)")+
+  ggtitle("Linearity")+My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+#checking normality (of dependent variable) - not amazing, but quite fine
+#For each grouping predictor level
+ggqqplot(melted, "value") +
+  facet_grid(Ambiguity ~ Framing)+theme_stata(scheme = "s1mono")+
+  scale_color_brewer(palette = "Paired") + My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+#overall
+melted$Slope_center <- center_scale(melted$Slope)
+ggqqplot(melted, "value") +theme_stata(scheme = "s1mono")+
+  scale_color_brewer(palette = "Paired") + My_Theme +
+  theme(text=element_text(family="Times New Roman"))
+
+```
