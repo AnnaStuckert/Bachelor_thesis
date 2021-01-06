@@ -121,6 +121,13 @@ My_Theme = theme(
   axis.text.x = element_text(size = 14),
   axis.title.y = element_text(size = 14))
 
+#Setting an additional one for most important graphs
+My_Theme2 = theme(
+  axis.title.x = element_text(size = 18),
+  axis.text.x = element_text(size = 16),
+  axis.text.y = element_text(size = 16),
+  axis.title.y = element_text(size = 18))
+
 library(extrafont)
 
 # Creating function for calculating summary statistics
@@ -332,9 +339,8 @@ ggplot(datac, aes(x=Ambiguity, y=value, color=Framing)) +
   theme_stata(scheme = "s1color")+
   scale_color_brewer(palette = "Paired")+
   xlab("Ambiguity")+
-  ylab("Gambling proportion") + My_Theme +
+  ylab("Gambling proportion") + My_Theme2 +
   theme(text=element_text(family="Times New Roman"))
-
 ```
 
 
@@ -461,7 +467,7 @@ ggplot(datac, aes(x=Ambiguity, y=value, color=Framing)) +
   scale_color_brewer(palette = "Paired")+
   xlab("Ambiguity")+
   ylab("Gambling proportion")+
-  facet_wrap(.~Slope_group) + My_Theme+
+  facet_wrap(.~Slope_group) + My_Theme2+
   theme(text=element_text(family="Times New Roman"))
 
 
@@ -479,7 +485,7 @@ ggplot(melted, aes(Slope, value, color = Ambiguity))+
   xlab("Slope")+
   ylab("Gambling proportion")+
   geom_vline(xintercept = 15.537) + #specifying a vertical line at the mean slope value
-  My_Theme +
+  My_Theme2 +
   theme(text=element_text(family="Times New Roman"))
 
 ```
